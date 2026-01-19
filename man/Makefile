@@ -1,7 +1,12 @@
-SCDOC=$(shell pkg-config --variable=scdoc scdoc)
+SCDOC?=$(shell pkg-config --variable=scdoc scdoc)
 PREFIX?=/usr/local
 MANDIR?=$(PREFIX)/share/man
 DESTDIR?=
+
+.if defined(.MAKE_VERSION)
+# BSD make (FreeBSD)
+SCDOC != pkg-config --variable=scdoc scdoc 2>/dev/null || echo scdoc
+.endif
 
 agreety.1: agreety-1.scd
 	$(SCDOC) < agreety-1.scd > agreety.1
@@ -30,4 +35,5 @@ clean:
 	rm -f agreety.1 greetd.1 greetd.5 greetd-ipc.7
 
 .DEFAULT_GOAL=all
+.MAIN: all
 .PHONY: all install clean
