@@ -53,12 +53,13 @@ sudo cp target/release/{greetd,agreety} /usr/local/bin/
 sudo cp greetd.service /etc/systemd/system/greetd.service
 mkdir /etc/greetd
 cp config.toml /etc/greetd/config.toml
+cp greetd.pam.linux.sample /etc/pam.d/greetd
 
 # Create the greeter user
 sudo useradd -M -G video greeter
 sudo chmod -R go+r /etc/greetd/
 
-# Look in the configuration file `/etc/greetd/config.toml` and edit as appropriate.
+# Look in the configuration files: `/etc/greetd/config.toml` and `/etc/pam.d/greetd`, and edit them as appropriate.
 # When done, enable and start greetd
 systemctl enable --now greetd
 ```
