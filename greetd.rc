@@ -1,0 +1,38 @@
+#!/bin/sh
+#
+# PROVIDE: greetd
+# REQUIRE: LOGIN FILESYSTEMS
+# BEFORE: xdm
+# KEYWORD: shutdown
+#
+# Add the following lines to /etc/rc.conf to enable greetd:
+#
+# greetd_enable="YES"
+#
+
+. /etc/rc.subr
+
+name="greetd"
+rcvar=greetd_enable
+
+load_rc_config $name
+
+: ${greetd_enable:="NO"}
+: ${greetd_config:="/usr/local/etc/greetd/config.toml"}
+: ${greetd_user:="root"}
+
+pidfile="/var/run/${name}.pid"
+command="/usr/sbin/daemon"
+procname="/usr/local/bin/greetd"
+command_args="-f -p ${pidfile} ${procname}"
+
+start_precmd="greetd_precmd"
+
+greetd_precmd()
+{
+    if [ ! -f "${greetd_config}" ]; then
+        err 1 "greetd configuration file ${greetd_config} does not exist"
+    fi
+}
+
+run_rc_command "$1"
