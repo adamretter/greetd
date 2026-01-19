@@ -5,7 +5,12 @@ use getopts::Options;
 
 use super::error::Error;
 
+#[cfg(target_os = "linux")]
 const RUNFILE: &str = "/run/greetd.run";
+
+#[cfg(target_os = "freebsd")]
+const RUNFILE: &str = "/var/run/greetd.run";
+
 const GENERAL_SERVICE: &str = "greetd";
 const GREETER_SERVICE: &str = "greetd-greeter";
 
@@ -237,7 +242,9 @@ pub fn read_config() -> Result<Config, Error> {
 
     let config_str = match matches.opt_str("config") {
         Some(v) => read_to_string(v),
-        None => read_to_string("/etc/greetd/greetd.conf")
+        None => read_to_string("/usr/local/etc/greetd/greetd.conf")
+            .or_else(|_| read_to_string("/usr/local/etc/greetd/config.toml"))
+            .or_else(|_| read_to_string("/etc/greetd/greetd.conf"))
             .or_else(|_| read_to_string("/etc/greetd/config.toml")),
     }?;
     let mut file = parse_config(&config_str)?;

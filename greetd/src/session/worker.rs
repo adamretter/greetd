@@ -176,8 +176,35 @@ fn worker(sock: &UnixDatagram) -> Result<(), Error> {
     // Make this process a session leader.
     setsid().map_err(|e| format!("unable to become session leader: {e}"))?;
 
+    // On FreeBSD, explicitly release any controlling terminal by calling TIOCNOTTY
+    // on /dev/tty. Even though setsid() should handle this, FreeBSD sometimes requires
+    // this extra step to fully disconnect from any inherited controlling terminal.
+    #[cfg(target_os = "freebsd")]
+    {
+        if let Ok(tty) = terminal::Terminal::open("/dev/tty") {
+            let _ = tty.term_release_ctty();
+        }
+    }
+
     match tty {
-        TerminalMode::Stdin => (),
+        TerminalMode::Stdin => {
+            // When using stdin mode, we need to set up a controlling terminal for job control.
+            // First, try to use stdin if it's a tty. If not, try to open /dev/tty (the current
+            // controlling terminal). If neither works, we skip this and the shell runs without
+            // job control.
+            if nix::unistd::isatty(0).unwrap_or(false) {
+                let stdin_term = terminal::Terminal::stdin();
+                stdin_term.term_connect_pipes()?;
+                let _ = stdin_term.term_take_ctty();
+            } else {
+                // stdin is not a tty, try to open /dev/tty
+                if let Ok(tty) = terminal::Terminal::open("/dev/tty") {
+                    tty.term_connect_pipes()?;
+                    let _ = tty.term_take_ctty();
+                }
+                // If /dev/tty doesn't exist or can't be opened, continue without a controlling tty
+            }
+        }
         TerminalMode::Terminal { path, vt, switch } => {
             // Tell PAM what TTY we're targetting, which is used by logind.
             pam.set_item(PamItemType::TTY, &format!("tty{vt}"))?;
@@ -195,15 +222,30 @@ fn worker(sock: &UnixDatagram) -> Result<(), Error> {
             target_term.term_clear()?;
 
             // A bit more work if a VT switch is required.
-            if switch && vt != target_term.vt_get_current()? {
-                // Perform a switch to the target VT, simultaneously resetting it to
-                // VT_AUTO.
-                target_term.vt_setactivate(vt)?;
+            if switch {
+                // To check the current VT, we need to query the VT master device,
+                // not the individual VT we just opened
+                let master_term = terminal::Terminal::open(terminal::VT_MASTER)?;
+                let current_vt = master_term.vt_get_current()?;
+
+                if vt != current_vt {
+                    // Perform a switch to the target VT, simultaneously resetting it to
+                    // VT_AUTO.
+                    target_term.vt_setactivate(vt)?;
+                }
             }
 
-            // Connect std(in|out|err), and make this our controlling TTY.
-            target_term.term_connect_pipes()?;
-            target_term.term_take_ctty()?;
+            #[cfg(target_os = "freebsd")]
+            {
+                target_term.term_connect_pipes()?;
+                target_term.term_take_ctty()?;
+            }
+
+            #[cfg(not(target_os = "freebsd"))]
+            {
+                target_term.term_connect_pipes()?;
+                target_term.term_take_ctty()?;
+            }
         }
     }
 

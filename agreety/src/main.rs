@@ -26,10 +26,24 @@ fn prompt_stderr(prompt: &str) -> Result<String, Box<dyn std::error::Error>> {
 }
 
 fn get_distro_name() -> Result<String, Box<dyn std::error::Error>> {
-    let os_release = fs::read_to_string("/etc/os-release")?;
-    let parsed = inish::parse(&os_release)?;
-    let general = parsed.get("").ok_or("no general section")?;
-    maybe_unquote(general.get("PRETTY_NAME").ok_or("no pretty name")?)
+    // Try multiple locations for os-release file (Linux standard locations)
+    for path in ["/etc/os-release", "/usr/lib/os-release"] {
+        if let Ok(os_release) = fs::read_to_string(path) {
+            if let Ok(parsed) = inish::parse(&os_release) {
+                if let Some(general) = parsed.get("") {
+                    if let Some(pretty_name) = general.get("PRETTY_NAME") {
+                        return maybe_unquote(pretty_name);
+                    }
+                }
+            }
+        }
+    }
+
+    // Fallback: use uname to construct a distro name (works on FreeBSD and other Unix systems)
+    let uts = uname()?;
+    Ok(format!("{} {}",
+        uts.sysname().to_str().unwrap(),
+        uts.release().to_str().unwrap()))
 }
 
 fn get_issue() -> Result<String, Box<dyn std::error::Error>> {
@@ -38,10 +52,23 @@ fn get_issue() -> Result<String, Box<dyn std::error::Error>> {
         .parse()
         .expect("unable to parse VTNR");
     let uts = uname()?;
-    Ok(fs::read_to_string("/etc/issue")?
+
+    // Read /etc/issue if it exists, otherwise create a default message
+    let issue_template = match fs::read_to_string("/etc/issue") {
+        Ok(content) => content,
+        Err(_) => {
+            // Default issue message for systems without /etc/issue (like FreeBSD)
+            let distro = get_distro_name().unwrap_or_else(|_|
+                format!("{}", uts.sysname().to_str().unwrap()));
+            format!("{} (\\n) (\\m)\n\n", distro)
+        }
+    };
+
+    Ok(issue_template
         .replace(
             "\\S",
-            &get_distro_name().unwrap_or_else(|_| "Linux".to_string()),
+            &get_distro_name().unwrap_or_else(|_|
+                uts.sysname().to_str().unwrap().to_string()),
         )
         .replace("\\l", &format!("tty{vtnr}"))
         .replace("\\s", uts.sysname().to_str().unwrap())

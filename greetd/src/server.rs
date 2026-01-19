@@ -108,7 +108,6 @@ async fn client_handler(ctx: &Context, mut s: UnixStream) -> Result<(), Error> {
 //
 // If the target is VtSelection::None, return nothing.
 fn get_tty(config: &Config) -> Result<TerminalMode, Error> {
-    const TTY_PREFIX: &str = "/dev/tty";
     const PTS_PREFIX: &str = "/dev/pts";
 
     let term = match config.file.terminal.vt {
@@ -117,9 +116,9 @@ fn get_tty(config: &Config) -> Result<TerminalMode, Error> {
             match term.ttyname() {
                 // We have a usable terminal, so let's decipher and return that
                 Ok(term_name)
-                    if term_name.starts_with(TTY_PREFIX) && term_name.len() > TTY_PREFIX.len() =>
+                    if term_name.starts_with(terminal::TTY_PREFIX) && term_name.len() > terminal::TTY_PREFIX.len() =>
                 {
-                    let vt = term_name[TTY_PREFIX.len()..]
+                    let vt = term_name[terminal::TTY_PREFIX.len()..]
                         .parse()
                         .map_err(|e| Error::Error(format!("unable to parse tty number: {e}")))?;
 
@@ -134,13 +133,13 @@ fn get_tty(config: &Config) -> Result<TerminalMode, Error> {
                 }
                 // We don't have a usable terminal, so we have to jump through some hoops
                 _ => {
-                    let sys_term = Terminal::open("/dev/tty0")
+                    let sys_term = Terminal::open(terminal::VT_MASTER)
                         .map_err(|e| format!("unable to open terminal: {e}"))?;
                     let vt = sys_term
                         .vt_get_current()
                         .map_err(|e| format!("unable to get current VT: {e}"))?;
                     TerminalMode::Terminal {
-                        path: format!("/dev/tty{vt}"),
+                        path: terminal::vt_path(vt),
                         vt,
                         switch: false,
                     }
@@ -149,19 +148,19 @@ fn get_tty(config: &Config) -> Result<TerminalMode, Error> {
         }
         VtSelection::Next => {
             let term =
-                Terminal::open("/dev/tty0").map_err(|e| format!("unable to open terminal: {e}"))?;
+                Terminal::open(terminal::VT_MASTER).map_err(|e| format!("unable to open terminal: {e}"))?;
             let vt = term
                 .vt_get_next()
                 .map_err(|e| format!("unable to get next VT: {e}"))?;
             TerminalMode::Terminal {
-                path: format!("/dev/tty{vt}"),
+                path: terminal::vt_path(vt),
                 vt,
                 switch: config.file.terminal.switch,
             }
         }
         VtSelection::None => TerminalMode::Stdin,
         VtSelection::Specific(vt) => TerminalMode::Terminal {
-            path: format!("/dev/tty{vt}"),
+            path: terminal::vt_path(vt),
             vt,
             switch: config.file.terminal.switch,
         },
@@ -170,8 +169,9 @@ fn get_tty(config: &Config) -> Result<TerminalMode, Error> {
 }
 
 fn pam_service_exists(service: &str) -> bool {
-    Path::new(&format!("/etc/pam.d/{}", service)).exists()
-        || Path::new(&format!("/usr/lib/pam.d/{}", service)).exists()
+    Path::new(&format!("/usr/local/etc/pam.d/{}", service)).exists()
+        || Path::new(&format!("/etc/pam.d/{}", service)).exists()
+            || Path::new(&format!("/usr/lib/pam.d/{}", service)).exists()
 }
 
 // Listener is a convenience wrapper for creating the UnixListener we need, and
@@ -180,7 +180,12 @@ struct Listener(UnixListener);
 
 impl Listener {
     fn create(uid: Uid, gid: Gid) -> Result<(String, Listener), Error> {
-        let path = format!("/run/greetd-{}.sock", getpid().as_raw());
+        let run_dir = if std::path::Path::new("/var/run").exists() {
+            "/var/run"
+        } else {
+            "/run"
+        };
+        let path = format!("{}/greetd-{}.sock", run_dir, getpid().as_raw());
         let _ = std::fs::remove_file(&path);
         let listener =
             UnixListener::bind(&path).map_err(|e| format!("unable to open listener: {e}"))?;
